@@ -9,7 +9,7 @@
   "use strict";
 
   // ------------------------------------------------------------------
-  // 导航定义（10 个页面）
+  // 导航定义（11 个页面）
   // ------------------------------------------------------------------
   const NAV = [
     {
@@ -18,6 +18,7 @@
         { key: "graph",      ico: "🕸", label: "图可视化",      href: "graph.html" },
         { key: "import",     ico: "⇄", label: "关系导入",      href: "import.html" },
         { key: "path",       ico: "🧭", label: "路径与共同好友", href: "path.html" },
+        { key: "similarity", ico: "≈", label: "相似度检索",    href: "similarity.html" },
         { key: "community",  ico: "◈", label: "社群发现",      href: "community.html" },
       ],
     },
@@ -43,6 +44,7 @@
     graph: ["图可视化", "vis.js 缩放拖拽 · 路径高亮"],
     import: ["关系导入", "批量导入边 · 增量更新"],
     path: ["路径与共同好友", "BFS 最短路径 · 共同好友查询"],
+    similarity: ["用户相似度检索", "邻域结构相似度 · Jaccard / Adamic-Adar"],
     community: ["社群发现", "Louvain 结果着色"],
     recommend: ["个性化推荐", "协同过滤 · 图嵌入 · 冷启动与多样性"],
     users: ["用户管理", "用户 CRUD 与画像"],

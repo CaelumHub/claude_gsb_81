@@ -57,7 +57,16 @@ def _check() -> int:
     rec = algorithms.hybrid_recommend(g, 1, k=3)
     assert "items" in rec
 
-    print("[check] OK: graph, bfs, pagerank, louvain, recommend all pass")
+    # Structural similarity ranking on the barbell: clique-mates 2 and 3 tie
+    # (broken by id), the bridge neighbour 4 ranks last.
+    sim = algorithms.rank_similar_users(g, 1)
+    assert [r["id"] for r in sim] == [2, 3, 4], sim
+    assert sim[0]["jaccard"] == 1.0 and sim[2]["common_neighbors"] == 1, sim
+    assert sim == algorithms.rank_similar_users(g, 1), "ranking must be reproducible"
+    sim_aa = algorithms.rank_similar_users(g, 1, sort_by="adamic_adar")
+    assert {r["id"] for r in sim_aa} == {2, 3, 4}, sim_aa
+
+    print("[check] OK: graph, bfs, pagerank, louvain, recommend, similarity all pass")
     return 0
 
 

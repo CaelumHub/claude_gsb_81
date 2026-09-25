@@ -397,7 +397,60 @@ class SocialGraphService:
             return -1
         if uid in communities:
             return communities[uid]
+        # Persisted community caches key nodes as strings (COMMUNITY_KEY_TYPE).
+        skey = str(uid)
+        if skey in communities:
+            return communities[skey]
         return -1
+
+    # ------------------------------------------------------------------
+    # Similarity retrieval
+    # ------------------------------------------------------------------
+    def similar_users(self, uid: int, limit: int = 20, metric: str = "jaccard") -> Optional[dict]:
+        """Rank users by neighbourhood-structure similarity to ``uid``.
+
+        Thin orchestration over :func:`algorithms.rank_similar_users`: the
+        algorithm layer owns the metric definitions and the (stable,
+        reproducible) ordering; here we only attach display fields (name,
+        degree, community) so the same result can be reused by any caller,
+        not just the similarity page.  Returns ``None`` when the user is not
+        in the graph (mapped to 404 by the API layer).
+        """
+        graph = self.get_graph()
+        if not graph.has_node(uid):
+            return None
+        users = self.store.load_users()
+        with config.Timed() as timer:
+            ranked = algorithms.rank_similar_users(graph, uid, sort_by=metric)
+        items = []
+        for row in ranked[:limit]:
+            cid = row["id"]
+            jaccard = round(row["jaccard"], 6)
+            aa = round(row["adamic_adar"], 6)
+            items.append({
+                "id": cid,
+                "name": users.get(cid, {}).get("name", str(cid)),
+                "degree": graph.degree(cid),
+                "community": self._community_of(cid),
+                "common_neighbors": row["common_neighbors"],
+                "jaccard": jaccard,
+                "adamic_adar": aa,
+                # ``score`` mirrors the active ranking metric so consumers
+                # have one unambiguous "similarity score" field.
+                "score": jaccard if metric == "jaccard" else aa,
+            })
+        return {
+            "user": uid,
+            "name": users.get(uid, {}).get("name", str(uid)),
+            "degree": graph.degree(uid),
+            "community": self._community_of(uid),
+            "metric": metric,
+            "limit": limit,
+            "total": len(ranked),
+            "returned": len(items),
+            "time_ms": round(timer.elapsed_ms, 2),
+            "items": items,
+        }
 
     def compute_pagerank(self, top: int = 20, force: bool = False) -> dict:
         with self._lock:

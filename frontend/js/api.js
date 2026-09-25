@@ -77,6 +77,9 @@
     commonFriends: (source, target) =>
       request("GET", "/api/common-friends" + qs({ source, target })),
 
+    // 用户相似度检索
+    similarUsers: (id, p) => request("GET", "/api/similarity/" + id + qs(p)),
+
     // 社群 / PageRank
     community: () => request("GET", "/api/community"),
     computeCommunity: (resolution) => request("POST", "/api/community/compute", { resolution }),

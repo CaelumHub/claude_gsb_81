@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>用户相似度检索 · 社交网络图分析</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <header id="topbar"></header>
+      <section id="content">
+        <div class="page-head">
+          <div>
+            <h1>用户相似度检索</h1>
+            <p class="desc">基于邻域结构计算目标用户与图中其他用户的结构相似度，按所选指标降序返回 Top-N；排序稳定、结果可复现，指标口径与「路径与共同好友」一致。</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row wrap">
+            <div class="field-group" style="flex:1;min-width:150px;margin-bottom:0">
+              <label class="field">目标用户 ID</label>
+              <input class="input" id="uid" type="number" placeholder="如 1">
+            </div>
+            <div class="field-group" style="flex:1;min-width:120px;margin-bottom:0">
+              <label class="field">返回数量 N</label>
+              <input class="input" id="limit" type="number" value="20" min="1" max="500">
+            </div>
+            <div class="field-group" style="min-width:190px;margin-bottom:0">
+              <label class="field">排序指标</label>
+              <select class="select" id="metric">
+                <option value="jaccard">Jaccard 相似度</option>
+                <option value="adamic_adar">Adamic-Adar 得分</option>
+              </select>
+            </div>
+            <div class="field-group" style="margin-bottom:0;align-self:flex-end">
+              <button class="btn btn-primary btn-lg" id="btnQuery">检索相似用户</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid cols-4 mt-16" id="statTiles"></div>
+
+        <div class="card mt-16">
+          <div class="card-head">
+            <div class="card-title">相似用户列表</div>
+            <div class="row" id="simBadges"></div>
+          </div>
+          <div id="simList"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/common.js"></script>
+  <script>
+    const C = common;
+    const METRIC_LABEL = { jaccard: "Jaccard", adamic_adar: "Adamic-Adar" };
+
+    function commCell(c) {
+      if (c == null || c < 0) return '<span class="faint">—</span>';
+      return '<span class="swatch" style="width:11px;height:11px;border-radius:3px;background:' + C.colorFor(c) +
+             ';display:inline-block;margin-right:6px"></span>社群 ' + c;
+    }
+
+    function renderTiles(d) {
+      const tiles = [
+        { label: "目标用户", value: C.escapeHtml(d.name), hint: "#" + d.user },
+        { label: "好友数", value: d.degree, hint: "一度邻居" },
+        { label: "所属社群", value: d.community >= 0 ? "社群 " + d.community : "未划分", hint: "Louvain 划分" },
+        { label: "相似用户", value: d.total, hint: "返回前 " + d.returned + " 条 · " + d.time_ms.toFixed(1) + " ms" },
+      ];
+      document.getElementById("statTiles").innerHTML = tiles.map((t) =>
+        '<div class="card stat-tile"><div class="label">' + t.label + '</div><div class="value">' + t.value +
+        '</div><div class="hint">' + t.hint + "</div></div>"
+      ).join("");
+    }
+
+    function renderList(d) {
+      document.getElementById("simBadges").innerHTML =
+        '<span class="badge brand">按 ' + METRIC_LABEL[d.metric] + " 排序</span>" +
+        '<span class="badge">候选 ' + d.total + " 位</span>" +
+        '<span class="badge info">Top ' + d.returned + "</span>";
+      const box = document.getElementById("simList");
+      if (!d.items.length) {
+        box.innerHTML = C.emptyState("≈", "没有结构相似的用户（该用户可能是孤立节点，或其邻域与其他用户无重叠）");
+        return;
+      }
+      const metric = d.metric;
+      const rows = d.items.map((it, i) => ({
+        rank: i + 1,
+        id: it.id,
+        name: it.name,
+        degree: it.degree,
+        community: it.community,
+        common: it.common_neighbors,
+        jaccard: it.jaccard,
+        adamic_adar: it.adamic_adar,
+      }));
+      const columns = [
+        { key: "rank", label: "#", align: "right" },
+        { key: "name", label: "用户", render: (r) => "<strong>" + C.escapeHtml(r.name) + '</strong> <span class="faint mono small">#' + r.id + "</span>" },
+        { key: "degree", label: "好友数", align: "right" },
+        { key: "community", label: "所属社群", render: (r) => commCell(r.community) },
+        { key: "common", label: "共同邻居", align: "right" },
+        { key: "jaccard", label: "Jaccard" + (metric === "jaccard" ? " ↓" : ""), align: "right",
+          render: (r) => '<span class="mono' + (metric === "jaccard" ? "" : " faint") + '">' + r.jaccard.toFixed(4) + "</span>" },
+        { key: "adamic_adar", label: "Adamic-Adar" + (metric === "adamic_adar" ? " ↓" : ""), align: "right",
+          render: (r) => '<span class="mono' + (metric === "adamic_adar" ? "" : " faint") + '">' + r.adamic_adar.toFixed(4) + "</span>" },
+      ];
+      C.renderTable(box, columns, rows);
+    }
+
+    function query() {
+      const uid = parseInt(document.getElementById("uid").value, 10);
+      const limit = parseInt(document.getElementById("limit").value, 10) || 20;
+      const metric = document.getElementById("metric").value;
+      if (isNaN(uid)) { C.toast("请输入目标用户 ID", "warning"); return; }
+      const box = document.getElementById("simList");
+      box.innerHTML = C.spinner();
+      api.similarUsers(uid, { limit, metric }).then((d) => {
+        renderTiles(d);
+        renderList(d);
+      }).catch((e) => {
+        document.getElementById("statTiles").innerHTML = "";
+        document.getElementById("simBadges").innerHTML = "";
+        box.innerHTML = C.emptyState("⚠", e.message);
+      });
+    }
+
+    C.initPage("similarity", function () {
+      document.getElementById("btnQuery").addEventListener("click", query);
+      document.getElementById("uid").addEventListener("keyup", (e) => { if (e.key === "Enter") query(); });
+      document.getElementById("limit").addEventListener("keyup", (e) => { if (e.key === "Enter") query(); });
+      // 默认示例
+      document.getElementById("uid").value = 1;
+      query();
+    });
+  </script>
+</body>
+</html>

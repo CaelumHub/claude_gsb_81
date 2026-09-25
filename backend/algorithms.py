@@ -7,6 +7,8 @@ Graph algorithms implemented for **memory-efficient, large-scale execution**.
 * ``bidirectional_shortest_path`` -- meets-in-the-middle, much faster on big graphs
 * ``pagerank``                   -- power iteration over CSR with dangling-node fix
 * ``louvain``                    -- two-phase modularity optimisation w/ early stop
+* ``rank_similar_users``         -- Jaccard / Adamic-Adar structural similarity
+  ranking over the 2-hop candidate ball (stable, reproducible total order)
 * ``recommend_*``                -- collaborative filtering + embedding + cold start
   + diversity re-ranking (MMR)
 
@@ -196,38 +198,110 @@ def common_friends(graph: Graph, u: int, v: int) -> List[int]:
     return sorted(result)
 
 
+def _neighbor_set(graph: Graph, x: int) -> Set[int]:
+    """Neighbourhood set shared by every overlap metric (single source of truth).
+
+    When ``config.NEIGHBOR_SET_INCLUDE_ENDPOINTS`` is on, the node itself is
+    part of its own neighbourhood set -- the established convention of this
+    codebase, used identically by common-friends, the similarity ranking below
+    and the recommenders, so that the metric definitions never diverge.
+    """
+    ns = set(graph.neighbors(x))
+    if config.NEIGHBOR_SET_INCLUDE_ENDPOINTS:
+        ns.add(x)
+    return ns
+
+
+def _pair_scores(graph: Graph, u: int, v: int, nu: Optional[Set[int]] = None) -> Tuple[float, float, int]:
+    """Return ``(jaccard, adamic_adar, common_count)`` for the pair ``(u, v)``.
+
+    ``nu`` may be passed precomputed when scoring one fixed user against many
+    candidates (see :func:`rank_similar_users`) so the set is built only once.
+    """
+    if nu is None:
+        nu = _neighbor_set(graph, u)
+    nv = _neighbor_set(graph, v)
+    if not nu:
+        return 0.0, 0.0, 0
+    common = nu & nv
+    jaccard = len(common) / len(nu)
+    aa = 0.0
+    for z in common:
+        dz = graph.degree(z)
+        if dz > 0:
+            aa += 1.0 / dz
+    return jaccard, aa, len(common)
+
+
 def jaccard_similarity(graph: Graph, u: int, v: int) -> float:
     if not graph.has_node(u) or not graph.has_node(v):
         return 0.0
-    nu = set(graph.neighbors(u))
-    nv = set(graph.neighbors(v))
-    if config.NEIGHBOR_SET_INCLUDE_ENDPOINTS:
-        nu.add(u)
-        nv.add(v)
-    if not nu:
-        return 0.0
-    inter = len(nu & nv)
-    return inter / len(nu)
+    jaccard, _aa, _n = _pair_scores(graph, u, v)
+    return jaccard
 
 
 def adamic_adar(graph: Graph, u: int, v: int) -> float:
     """Adamic-Adar link-prediction score between two users."""
     if not graph.has_node(u) or not graph.has_node(v):
         return 0.0
-    nu = set(graph.neighbors(u))
-    nv = set(graph.neighbors(v))
-    if config.NEIGHBOR_SET_INCLUDE_ENDPOINTS:
-        nu.add(u)
-        nv.add(v)
-    common = nu & nv
-    if not common:
-        return 0.0
-    score = 0.0
-    for z in common:
-        dz = graph.degree(z)
-        if dz > 0:
-            score += 1.0 / dz
-    return score
+    _j, aa, _n = _pair_scores(graph, u, v)
+    return aa
+
+
+#: Ranking metrics supported by :func:`rank_similar_users`.
+SIMILARITY_METRICS = ("jaccard", "adamic_adar")
+
+
+def rank_similar_users(
+    graph: Graph,
+    user: int,
+    limit: Optional[int] = None,
+    sort_by: str = "jaccard",
+) -> List[dict]:
+    """Rank every user with non-zero structural similarity to ``user``.
+
+    For each candidate we compute the two established neighbourhood-overlap
+    metrics (Jaccard and Adamic-Adar, same definitions as
+    :func:`jaccard_similarity` / :func:`adamic_adar`) and return the rows
+    sorted by the selected metric.
+
+    The candidate set is the exact 2-hop ball around ``user`` (friends plus
+    friends-of-friends): with the neighbourhood-set convention above, any node
+    outside it shares no overlap and would score exactly 0 on both metrics, so
+    restricting to it changes nothing but the runtime -- this keeps the cost
+    proportional to the local neighbourhood instead of the whole graph.
+
+    Ordering is a *total* order -- selected metric desc, then the other metric
+    desc, then node id asc -- so the result is stable and reproducible across
+    runs.  ``limit`` (if given) keeps the top rows after sorting.
+    """
+    if sort_by not in SIMILARITY_METRICS:
+        raise ValueError(f"unknown similarity metric: {sort_by!r}")
+    if not graph.has_node(user):
+        return []
+
+    nu = _neighbor_set(graph, user)
+    candidates: Set[int] = set()
+    for f in graph.neighbors(user):
+        candidates.add(f)
+        for c in graph.neighbors(f):
+            candidates.add(c)
+    candidates.discard(user)
+
+    secondary = "adamic_adar" if sort_by == "jaccard" else "jaccard"
+    rows: List[dict] = []
+    for cid in candidates:
+        jaccard, aa, common = _pair_scores(graph, user, cid, nu)
+        rows.append({
+            "id": cid,
+            "jaccard": jaccard,
+            "adamic_adar": aa,
+            "common_neighbors": common,
+        })
+    rows.sort(key=lambda r: (-r[sort_by], -r[secondary], r["id"]))
+    if limit is not None:
+        rows = rows[: max(0, limit)]
+    return rows
 
 
 # ===========================================================================

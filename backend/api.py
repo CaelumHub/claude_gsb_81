@@ -23,6 +23,7 @@ Endpoint summary (all under ``/api``):
     GET    /api/graph/neighborhood    ?node&depth&limit
     GET    /api/path                  ?source&target&algorithm
     GET    /api/common-friends        ?source&target
+    GET    /api/similarity/<id>       ?limit&metric   (jaccard|adamic_adar)
     GET    /api/community             (cached)
     POST   /api/community/compute     {resolution?}
     GET    /api/pagerank              ?top&refresh
@@ -52,9 +53,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 
 try:
-    from . import config, storage
+    from . import algorithms, config, storage
     from .service import SocialGraphService
 except ImportError:  # pragma: no cover
+    import algorithms
     import config
     import storage
     from service import SocialGraphService
@@ -267,6 +269,19 @@ class ApiRouter:
             info = self.service.common_friends_info(source, target)
             info["source"], info["target"] = target, source
             return 200, info
+
+        # --- similarity retrieval ---
+        m = re.fullmatch(r"/similarity/(\d+)", route)
+        if m and method == "GET":
+            uid = int(m.group(1))
+            limit = min(max(_to_int(query.get("limit"), 20), 1), 500)
+            metric = query.get("metric", "jaccard")
+            if metric not in algorithms.SIMILARITY_METRICS:
+                return _error(f"未知排序指标: {metric}（可选 {', '.join(algorithms.SIMILARITY_METRICS)}）")
+            result = self.service.similar_users(uid, limit=limit, metric=metric)
+            if result is None:
+                return _error("用户不存在", 404)
+            return 200, result
 
         # --- community ---
         if route == "/community" and method == "GET":
