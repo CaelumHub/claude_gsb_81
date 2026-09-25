@@ -34,6 +34,7 @@ try:
         louvain,
         pagerank,
         shortest_path,
+        structural_similarity,
     )
     from .graph import Graph
     from .storage import DerivedStore, GraphStore, rebuild_index_from_shards
@@ -51,6 +52,7 @@ except ImportError:  # pragma: no cover
         louvain,
         pagerank,
         shortest_path,
+        structural_similarity,
     )
     from graph import Graph
     from storage import DerivedStore, GraphStore, rebuild_index_from_shards
@@ -71,6 +73,9 @@ class SocialGraphService:
         self._community_cache: Optional[dict] = None
         self._pagerank_cache: Optional[Dict[int, float]] = None
         self._rec_cache: Dict[int, dict] = self.derived.load_recommendations()
+        # Per-user structural-similarity rankings (computed results, reusable
+        # across queries/pages; invalidated whenever the graph topology changes).
+        self._similarity_cache: Dict[int, dict] = self.derived.load_similarity()
         self._community_dirty = False
         self._pagerank_dirty = False
 
@@ -89,11 +94,24 @@ class SocialGraphService:
             return self._graph
 
     def invalidate_graph(self) -> None:
+        """Mark the graph stale after a topology change.
+
+        Also drops the per-user similarity rankings: Jaccard / Adamic-Adar are
+        purely structural, so every cached ranking would be stale after an edge
+        import, a user deletion or a reseed.  The emptied cache is persisted so
+        a server restart cannot resurrect stale results.
+        """
         with self._lock:
             self._graph = None
             self._graph_dirty = True
             self._community_dirty = False
             self._pagerank_dirty = True
+            self._clear_similarity_cache()
+
+    def _clear_similarity_cache(self) -> None:
+        if self._similarity_cache:
+            self._similarity_cache = {}
+            self.derived.save_similarity(self._similarity_cache)
 
     def graph_stats(self) -> dict:
         graph = self.get_graph()
@@ -341,9 +359,9 @@ class SocialGraphService:
             "source": u,
             "target": v,
             "common": common,
-            "count": len(common) + (1 if common else 0),
-            "jaccard": round(jaccard_similarity(graph, u, v), 6),
-            "adamic_adar": round(adamic_adar(graph, u, v), 6),
+            "count": len(common),
+            "jaccard": round(jaccard_similarity(graph, u, v), config.SIMILARITY_SCORE_DIGITS),
+            "adamic_adar": round(adamic_adar(graph, u, v), config.SIMILARITY_SCORE_DIGITS),
         }
 
     # ------------------------------------------------------------------
@@ -395,8 +413,12 @@ class SocialGraphService:
         communities = comm.get("communities", {})
         if not communities:
             return -1
+        # Community maps are serialised with string node keys
+        # (config.COMMUNITY_KEY_TYPE == "str"); tolerate int keys too.
         if uid in communities:
-            return communities[uid]
+            return int(communities[uid])
+        if str(uid) in communities:
+            return int(communities[str(uid)])
         return -1
 
     def compute_pagerank(self, top: int = 20, force: bool = False) -> dict:
@@ -487,6 +509,84 @@ class SocialGraphService:
             items = rec.get("items", [])
             out[uid] = items[:capped]
         return out
+
+    # ------------------------------------------------------------------
+    # User structural-similarity search
+    # ------------------------------------------------------------------
+    def find_similar_users(self, uid: int, limit: Optional[int] = None, refresh: bool = False) -> dict:
+        """Rank other users against ``uid`` by neighbourhood similarity.
+
+        The computation (Jaccard + Adamic-Adar over the two-hop neighbourhood)
+        lives in :mod:`algorithms` and is completely independent of any
+        presentation concern; this method only caches its ranked result and
+        enriches the requested slice with display data (name, friend count,
+        community, friend-or-not flag).  The cache therefore stays reusable by
+        other callers/pages.
+        """
+        graph = self.get_graph()
+        users = self.store.load_users()
+        if not graph.has_node(uid):
+            # Edge-less users are recorded in users.json but never appear in the
+            # edge-shard graph; they are valid users with an empty neighbourhood.
+            if uid not in users:
+                raise KeyError(uid)
+
+        limit = config.SIMILARITY_DEFAULT_LIMIT if limit is None else max(1, min(limit, config.SIMILARITY_MAX_LIMIT))
+        digits = config.SIMILARITY_SCORE_DIGITS
+
+        # ---- cache: full ranking (up to SIMILARITY_MAX_LIMIT) is reused, the
+        # caller only picks a prefix, so changing the limit never recomputes. --
+        if not refresh and uid in self._similarity_cache:
+            cached = self._similarity_cache[uid]
+            ranking = [tuple(t) for t in cached.get("ranking", [])]
+            computed_at = cached.get("computed_at", 0)
+            time_ms = None
+        else:
+            with config.Timed() as timer:
+                ranking = structural_similarity(graph, uid, config.SIMILARITY_MAX_LIMIT)
+            time_ms = round(timer.elapsed_ms, 2)
+            computed_at = config.now_ms()
+            with self._lock:
+                self._similarity_cache[uid] = {
+                    "user": uid,
+                    "computed_at": computed_at,
+                    "ranking": [
+                        [int(v), round(j, digits), round(a, digits), int(c)]
+                        for v, j, a, c in ranking
+                    ],
+                }
+                self.derived.save_similarity(self._similarity_cache)
+
+        friend_set = set(graph.neighbors(uid))
+        items = []
+        for v, jacc, aa, common_count in ranking[:limit]:
+            items.append({
+                "id": v,
+                "name": users.get(v, {}).get("name", str(v)),
+                "degree": graph.degree(v),
+                "community": self._community_of(v),
+                "jaccard": round(jacc, digits),
+                "adamic_adar": round(aa, digits),
+                "common_friends": common_count,
+                "is_friend": v in friend_set,
+            })
+
+        result = {
+            "user": uid,
+            "name": users.get(uid, {}).get("name", str(uid)),
+            "degree": graph.degree(uid),
+            "community": self._community_of(uid),
+            "limit": limit,
+            "total": len(ranking),
+            "items": items,
+            "computed_at": computed_at,
+        }
+        if time_ms is None:
+            result["cached"] = True
+        else:
+            result["cached"] = False
+            result["time_ms"] = time_ms
+        return result
 
     # ------------------------------------------------------------------
     # Export

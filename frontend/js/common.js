@@ -25,6 +25,7 @@
       group: "智能推荐",
       items: [
         { key: "recommend",  ico: "✦", label: "个性化推荐",    href: "recommend.html" },
+        { key: "similar",    ico: "🪞", label: "用户相似度检索", href: "similar.html" },
         { key: "users",      ico: "👤", label: "用户管理",      href: "users.html" },
         { key: "tags",       ico: "🏷", label: "标签管理",      href: "tags.html" },
       ],
@@ -45,6 +46,7 @@
     path: ["路径与共同好友", "BFS 最短路径 · 共同好友查询"],
     community: ["社群发现", "Louvain 结果着色"],
     recommend: ["个性化推荐", "协同过滤 · 图嵌入 · 冷启动与多样性"],
+    similar: ["用户相似度检索", "邻域结构 · Jaccard 与 Adamic-Adar 排序"],
     users: ["用户管理", "用户 CRUD 与画像"],
     tags: ["标签管理", "标签体系与关联"],
     stats: ["统计面板", "图指标总览"],

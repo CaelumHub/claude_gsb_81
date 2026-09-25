@@ -1,10 +1,10 @@
 # 社交网络图分析与推荐系统
 
 一个 **零第三方依赖**（Python 后端纯标准库，前端仅引 vis.js CDN）的社交网络图分析
-与推荐系统。前端 10 个页面覆盖用户管理、关系导入、图可视化、路径与共同好友、
-社群发现、个性化推荐、统计面板、系统设置、数据导出与标签管理；后端实现邻接表图
-构建、BFS 最短路径、PageRank、Louvain 社群划分，以及协同过滤 + 图嵌入 + 标签的
-混合推荐。
+与推荐系统。前端 11 个页面覆盖用户管理、关系导入、图可视化、路径与共同好友、
+社群发现、个性化推荐、用户相似度检索、统计面板、系统设置、数据导出与标签管理；
+后端实现邻接表图构建、BFS 最短路径、PageRank、Louvain 社群划分，以及协同过滤 +
+图嵌入 + 标签的混合推荐，并基于邻域结构提供 Jaccard / Adamic-Adar 用户相似度检索。
 
 ---
 
@@ -58,10 +58,11 @@ gsb3/
 │   ├── path.html               # 4. 最短路径与共同好友查询
 │   ├── community.html          # 5. 社群发现（Louvain 着色）
 │   ├── recommend.html          # 6. 个性化推荐列表
-│   ├── stats.html              # 7. 统计面板
-│   ├── settings.html           # 8. 系统设置
-│   ├── export.html             # 9. 数据导出
-│   ├── tags.html               # 10. 标签管理
+│   ├── similar.html            # 7. 用户相似度检索（Jaccard / Adamic-Adar）
+│   ├── stats.html              # 8. 统计面板
+│   ├── settings.html           # 9. 系统设置
+│   ├── export.html             # 10. 数据导出
+│   ├── tags.html               # 11. 标签管理
 │   ├── css/style.css           # 设计系统（明暗双主题）
 │   └── js/                     # api.js（客户端）+ common.js（外壳/工具）
 └── data/                       # 运行期生成（分片图、画像、推荐、社群…）
@@ -70,6 +71,7 @@ gsb3/
     ├── profiles.json           # 用户画像（预留扩展）
     ├── tags.json               # 标签体系
     ├── recommendations.json    # 推荐结果（单独存储）
+    ├── similarity.json         # 用户相似度检索结果缓存
     ├── community.json          # Louvain 结果缓存
     ├── pagerank.json           # PageRank 结果缓存
     ├── index.json              # 用户 → 分片 索引
@@ -106,6 +108,7 @@ gsb3/
 | PageRank | 幂迭代，显式处理 dangling 节点，O(n) 内存，L1 收敛判定 |
 | Louvain | 两阶段模块度优化：局部移动（ΔQ 增量公式）+ 聚合，迭代至收敛，固定种子可复现，`min_improvement` 早停 |
 | 协同过滤 | 朋友的朋友 + Adamic-Adar 权重去偏，仅依赖邻域规模 |
+| 用户相似度 | 邻域结构 Jaccard（邻域交并比）+ Adamic-Adar（共同好友按 `1/log(deg)` 去偏），两级分数降序 + ID 升序的确定性排序，结果可缓存复用 |
 | 图嵌入 | 距离-地标（landmark）定位嵌入：L 次有界 BFS 得到低维向量，捕捉结构相似性，无需神经网络训练 |
 | 冷启动 | 好友数低于阈值时退化为「热门 + 标签重叠」 |
 | 多样性 | MMR 最大边际相关性重排序，λ 权衡相关性与多样性 |
@@ -134,6 +137,7 @@ gsb3/
 | GET/POST | `/api/community` · `/api/community/compute` | Louvain 结果 / 重算 |
 | GET | `/api/pagerank?top=` | PageRank 中心性 |
 | GET/POST | `/api/recommend/<id>` · `/api/recommend` | 单用户 / 批量推荐 |
+| GET | `/api/similar/<id>` | 用户相似度检索（`?limit&refresh`，Jaccard / Adamic-Adar） |
 | GET | `/api/stats` | 统计面板聚合 |
 | GET/PUT | `/api/settings` | 读取 / 保存设置 |
 | GET/POST/DELETE | `/api/tags` | 标签管理 |

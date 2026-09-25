@@ -178,56 +178,114 @@ def shortest_path(
 # Common friends / neighbourhood overlap
 # ===========================================================================
 def common_friends(graph: Graph, u: int, v: int) -> List[int]:
-    """Return the intersection of the neighbour sets of ``u`` and ``v``."""
-    if not graph.has_node(u) or not graph.has_node(v):
+    """Return the intersection of the neighbour sets of ``u`` and ``v``.
+
+    Only *common neighbours* count (a shared direct friend of both users); the
+    endpoints themselves are not members of their own neighbour sets, so they
+    are never included.  The result is sorted by user id for reproducibility.
+    """
+    if not graph.has_node(u) or not graph.has_node(v) or u == v:
         return []
     v_near: Set[int] = set(graph.neighbors(v))
-    v_near.add(v)
-    for hop1 in graph.neighbors(v):
-        for hop2 in graph.neighbors(hop1):
-            v_near.add(hop2)
-    result: Set[int] = set()
-    for nb in graph.neighbors(u):
-        if nb in v_near:
-            result.add(nb)
-    if config.NEIGHBOR_SET_INCLUDE_ENDPOINTS:
-        result.add(u)
-        result.add(v)
+    result = [nb for nb in graph.neighbors(u) if nb in v_near]
     return sorted(result)
 
 
 def jaccard_similarity(graph: Graph, u: int, v: int) -> float:
-    if not graph.has_node(u) or not graph.has_node(v):
+    """Canonical Jaccard similarity of the two neighbour sets.
+
+    ``|N(u) ∩ N(v)| / |N(u) ∪ N(v)|``, symmetric and in ``[0, 1]``.  Returns
+    ``0.0`` when either user has no neighbours (empty union).
+    """
+    if not graph.has_node(u) or not graph.has_node(v) or u == v:
         return 0.0
     nu = set(graph.neighbors(u))
     nv = set(graph.neighbors(v))
-    if config.NEIGHBOR_SET_INCLUDE_ENDPOINTS:
-        nu.add(u)
-        nv.add(v)
-    if not nu:
+    union = len(nu | nv)
+    if union == 0:
         return 0.0
-    inter = len(nu & nv)
-    return inter / len(nu)
+    return len(nu & nv) / union
 
 
 def adamic_adar(graph: Graph, u: int, v: int) -> float:
-    """Adamic-Adar link-prediction score between two users."""
-    if not graph.has_node(u) or not graph.has_node(v):
+    """Canonical Adamic-Adar link-prediction score between two users.
+
+    ``Σ_{z ∈ N(u) ∩ N(v)} 1 / log(deg(z))`` -- each shared friend contributes
+    inversely to the logarithm of its degree, so hubs (which connect
+    indiscriminately) are discounted.  Shared friends with ``deg(z) < 2`` make
+    the logarithm undefined/non-positive and are skipped (in a simple
+    undirected graph a common friend of two distinct nodes always has
+    ``deg(z) >= 2``).
+    """
+    if not graph.has_node(u) or not graph.has_node(v) or u == v:
         return 0.0
     nu = set(graph.neighbors(u))
     nv = set(graph.neighbors(v))
-    if config.NEIGHBOR_SET_INCLUDE_ENDPOINTS:
-        nu.add(u)
-        nv.add(v)
-    common = nu & nv
-    if not common:
-        return 0.0
     score = 0.0
-    for z in common:
+    for z in nu & nv:
         dz = graph.degree(z)
-        if dz > 0:
-            score += 1.0 / dz
+        if dz > 1:
+            score += 1.0 / math.log(dz)
     return score
+
+
+# ===========================================================================
+# Structural similarity search
+# ===========================================================================
+def structural_similarity(
+    graph: Graph,
+    user: int,
+    limit: Optional[int] = None,
+) -> List[Tuple[int, float, float, int]]:
+    """Rank every other user by structural similarity to ``user``.
+
+    For each other user ``v`` sharing at least one friend with ``user`` we
+    compute:
+
+    * **Jaccard** -- ``|N(u) ∩ N(v)| / |N(u) ∪ N(v)|``
+    * **Adamic-Adar** -- ``Σ_{z ∈ N(u) ∩ N(v)} 1 / log(deg(z))``
+
+    Only the user's two-hop neighbourhood is expanded, so work scales with the
+    local neighbourhood rather than the whole graph.  The ordering is fully
+    deterministic: descending Jaccard, then descending Adamic-Adar, then
+    ascending user id -- hence the ranking is stable and reproducible across
+    runs on the same graph.  Returns ``(v, jaccard, adamic_adar, common_count)``
+    tuples; pass ``limit`` to truncate.
+    """
+    if not graph.has_node(user):
+        return []
+
+    friends: List[int] = sorted(graph.neighbors(user))
+    if not friends:
+        return []
+
+    deg_u = len(friends)
+    # Accumulate, for every shared-friend candidate, the intersection count and
+    # the Adamic-Adar contribution (computed once per shared friend).
+    common_count: Dict[int, int] = defaultdict(int)
+    aa_score: Dict[int, float] = defaultdict(float)
+    for f in friends:
+        df = graph.degree(f)
+        weight = 1.0 / math.log(df) if df > 1 else 0.0
+        for cand in graph.neighbors(f):
+            if cand == user:
+                continue
+            common_count[cand] += 1
+            aa_score[cand] += weight
+
+    ranked: List[Tuple[int, float, float, int]] = []
+    for cand, inter in common_count.items():
+        if inter == 0:
+            continue
+        jaccard = inter / (deg_u + graph.degree(cand) - inter)
+        ranked.append((cand, jaccard, aa_score[cand], inter))
+
+    # Stable, reproducible order: score desc (Jaccard primary, AA tiebreak),
+    # then user id asc.
+    ranked.sort(key=lambda t: (-t[1], -t[2], t[0]))
+    if limit is not None and limit >= 0:
+        ranked = ranked[:limit]
+    return ranked
 
 
 # ===========================================================================

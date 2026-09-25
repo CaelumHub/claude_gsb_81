@@ -48,6 +48,26 @@ def _check() -> int:
     assert path == [1, 2, 3, 4, 5, 6] or path == [1, 3, 4, 6, 5] or len(path) - 1 == dist, path
 
     common = algorithms.common_friends(g, 1, 6)
+    assert common == [], common
+
+    # Similarity metrics use the canonical neighbour-set definitions.
+    assert algorithms.jaccard_similarity(g, 1, 6) == 0.0
+    # Nodes 1 and 2 share node 3: |{2,3} ∩ {1,3}|=1, union=3 -> 1/3.
+    assert abs(algorithms.jaccard_similarity(g, 1, 2) - 1.0 / 3.0) < 1e-9
+    assert algorithms.jaccard_similarity(g, 1, 2) == algorithms.jaccard_similarity(g, 2, 1)
+    assert algorithms.adamic_adar(g, 1, 2) == 1.0 / __import__("math").log(3)
+    assert algorithms.adamic_adar(g, 1, 6) == 0.0
+
+    # Structural-similarity search is ordered, deterministic and reproducible.
+    ranked = algorithms.structural_similarity(g, 1)
+    assert ranked, "user 1 must have similar neighbours"
+    assert ranked[0][0] == 2, ranked  # highest overlap is within the clique
+    jac_values = [t[1] for t in ranked]
+    assert jac_values == sorted(jac_values, reverse=True)
+    again = algorithms.structural_similarity(g, 1)
+    assert ranked == again, "ranking must be reproducible"
+    assert [t[0] for t in algorithms.structural_similarity(g, 1, limit=2)] == [r[0] for r in ranked[:2]]
+
     pr = algorithms.pagerank(g)
     assert abs(sum(pr.values()) - 1.0) < 1e-6, sum(pr.values())
 

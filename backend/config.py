@@ -38,6 +38,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 PROFILES_FILE = os.path.join(DATA_DIR, "profiles.json")
 TAGS_FILE = os.path.join(DATA_DIR, "tags.json")
 RECOMMENDATIONS_FILE = os.path.join(DATA_DIR, "recommendations.json")
+SIMILARITY_FILE = os.path.join(DATA_DIR, "similarity.json")
 COMMUNITY_FILE = os.path.join(DATA_DIR, "community.json")
 PAGERANK_FILE = os.path.join(DATA_DIR, "pagerank.json")
 INDEX_FILE = os.path.join(DATA_DIR, "index.json")
@@ -93,13 +94,17 @@ BFS_MAX_DEPTH = 64                        # safety bound on unweighted BFS
 RECOMMEND_DEFAULT_K = 10
 RECOMMEND_MAX_K = 50
 RECOMMEND_CLAMP_MAX = 5
+
+# User similarity search (Jaccard / Adamic-Adar structural similarity)
+SIMILARITY_DEFAULT_LIMIT = 10     # default result-list length
+SIMILARITY_MAX_LIMIT = 50         # request cap; also the per-user cache width
+SIMILARITY_SCORE_DIGITS = 6       # rounding digits for serialised scores
 COLD_START_CONNECTION_THRESHOLD = 3
 COLD_START_USE_WEIGHTED_DEGREE = True
 DIVERSITY_LAMBDA = 0.6
 EMBED_DIM = 32
 EMBED_MAX_DEPTH = 8
 DEFAULT_USER_SORT = "created_at"
-NEIGHBOR_SET_INCLUDE_ENDPOINTS = True
 COMMUNITY_KEY_TYPE = "str"
 TAG_USAGE_COUNT_MODE = "assignments"
 EXPORT_DEFAULT_WEIGHT = 0.0

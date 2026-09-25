@@ -422,6 +422,21 @@ class DerivedStore:
             config.RECOMMENDATIONS_FILE, {"recs": {str(k): v for k, v in recs.items()}}
         )
 
+    def load_similarity(self) -> Dict[int, dict]:
+        """Load cached per-user structural-similarity rankings.
+
+        Each value stores the computed-at timestamp, graph signature and the
+        ranked result list so the API can serve repeated queries with zero
+        recomputation and re-slice the list for different limits.
+        """
+        data = config.read_json(config.SIMILARITY_FILE, {"results": {}})
+        return {int(k): v for k, v in data.get("results", {}).items()}
+
+    def save_similarity(self, results: Dict[int, dict]) -> None:
+        config.atomic_write_json(
+            config.SIMILARITY_FILE, {"results": {str(k): v for k, v in results.items()}}
+        )
+
     def load_community(self) -> dict:
         data = config.read_json(config.COMMUNITY_FILE, {})
         data.setdefault("communities", {})

@@ -28,6 +28,7 @@ Endpoint summary (all under ``/api``):
     GET    /api/pagerank              ?top&refresh
     GET    /api/recommend/<id>        ?k&refresh&strategy
     POST   /api/recommend             {ids:[...], k}
+    GET    /api/similar/<id>          ?limit&refresh  (Jaccard + Adamic-Adar)
     GET    /api/stats
     GET    /api/settings              /  PUT /api/settings
     POST   /api/settings/reset
@@ -316,6 +317,18 @@ class ApiRouter:
             for uid in ids:
                 result[str(uid)] = self.service.recommend(int(uid), k=k)["items"]
             return 200, {"results": result}
+
+        # --- user structural-similarity search ---
+        m = re.fullmatch(r"/similar/(\d+)", route)
+        if m and method == "GET":
+            uid = int(m.group(1))
+            raw_limit = _to_int(query.get("limit"), config.SIMILARITY_DEFAULT_LIMIT)
+            limit = min(max(raw_limit, 1), config.SIMILARITY_MAX_LIMIT)
+            refresh = _to_bool(query.get("refresh"), False)
+            try:
+                return 200, self.service.find_similar_users(uid, limit=limit, refresh=refresh)
+            except KeyError:
+                return _error("用户不存在", 404)
 
         # --- stats ---
         if route == "/stats" and method == "GET":

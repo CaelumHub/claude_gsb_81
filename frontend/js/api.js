@@ -86,6 +86,9 @@
     recommend: (id, p) => request("GET", "/api/recommend/" + id + qs(p)),
     recommendMany: (ids, k) => request("POST", "/api/recommend", { ids, k }),
 
+    // 用户相似度检索（Jaccard / Adamic-Adar）
+    similarUsers: (id, p) => request("GET", "/api/similar/" + id + qs(p)),
+
     // 统计 / 设置 / 标签
     stats: () => request("GET", "/api/stats"),
     settings: () => request("GET", "/api/settings"),
